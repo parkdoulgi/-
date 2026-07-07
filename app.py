@@ -6,8 +6,8 @@ import time
 # 페이지 레이아웃 설정
 st.set_page_config(page_title="란체스터 턴제 작전 시뮬레이터", layout="wide")
 
-st.title("🎮 란체스터 턴제 작전 시뮬레이터 (Tactical Turn-Based Game)")
-st.write("양측의 군세를 설정하고 [전투 작전 개시]를 누르면, 매 턴마다 화력을 주고받으며 전황이 실시간으로 시각화됩니다.")
+st.title("🎮 란체스터 턴제 작전 시뮬레이터 (+가상 전술 지도)")
+st.write("작전 개시 버튼을 누르면, 하단에 가상의 10x10 작전 지도가 생성되며 부대 이동과 지형별 교전 상황이 실시간 격자로 시각화됩니다.")
 
 # 1. 부대 규모(제대) 정의
 UNIT_SCALES = {
@@ -53,7 +53,7 @@ RANDOM_EVENTS = [
 
 st.markdown("---")
 
-# [상단 종합 전장 변수 영역] ----------------------------------------------------
+# [상단 종합 전장 환경 설정]
 st.subheader("🌐 글로벌 전장 인프라 설정")
 c_env1, c_env2, c_env3 = st.columns(3)
 
@@ -61,13 +61,13 @@ with c_env1:
     selected_scale = st.selectbox("📏 작전 부대 체급 (제대 규모)", options=list(UNIT_SCALES.keys()), index=4)
     scale_weight = UNIT_SCALES[selected_scale]
 with c_env2:
-    terrain = st.selectbox("⛰️ 전장 지형 선택", ["평지", "야지 (산악)", "시가지"])
+    terrain_type = st.selectbox("⛰️ 대표 전장 환경", ["평지 중심 전장", "야지(산악) 중심 전장", "시가지 중심 전장"])
 with c_env3:
     tactics_relation = st.selectbox("⚔️ 초기 배치 상태", ["공평한 조우전", "자유진영 진지방어", "공산진영 진지방어"])
 
 st.markdown("---")
 
-# [진영별 입력 영역] ----------------------------------------------------
+# [진영별 입력 영역]
 col1, col2 = st.columns(2)
 
 with col1:
@@ -96,113 +96,137 @@ with col2:
 
 st.markdown("---")
 
-# [턴제 시뮬레이션 구동 엔진] ----------------------------------------------------
-if st.button("⚔️ 턴제 작전 시뮬레이션 개시 (전투 시작)", type="primary", use_container_width=True):
+# [턴제 시뮬레이션 및 지도 렌더링]
+if st.button("⚔️ 턴제 작전 시뮬레이션 개시 (지도 전개)", type="primary", use_container_width=True):
     
-    # 1. 초기 총 원 계산
+    # 가상의 8x8 고정 작전 지도 베이스라인 생성
+    # ⬜ 평지, ⛰️ 산악/야지, 🏢 시가지
+    base_map = []
+    terrain_elements = ["⬜", "⬜", "⬜", "⛰️", "⛰️", "🏢"] if "평지" in terrain_type else (
+                       ["⛰️", "⛰️", "⛰️", "⬜", "⬜", "🏢"] if "야지" in terrain_type else 
+                       ["🏢", "🏢", "🏢", "⬜", "⛰️", "⬜"])
+    
+    for r in range(8):
+        row = [random.choice(terrain_elements) for _ in range(8)]
+        base_map.append(row)
+        
+    # 초기 진영 마커 위치 설정 (자유군은 왼쪽 상단, 공산군은 오른쪽 하단에서 시작하여 전진)
+    b_x, b_y = 0, 0
+    r_x, r_y = 7, 7
+
+    # 초기 HP 연산
     blue_single_total = sum(blue_regular.values())
     red_single_total = sum(red_regular.values())
-    
-    # 실제 전장에 진입하는 총 인원수 (규모 가중치 적용)
     blue_start_HP = (blue_single_total * blue_unit_count * scale_weight) + blue_guerrilla
     red_start_HP = (red_single_total * red_unit_count * scale_weight) + red_guerrilla
-    
-    # 2. 기초 화력 계산 가중치 맵 구성
-    blue_power_map = BRANCH_POWER.copy()
-    red_power_map = BRANCH_POWER.copy()
-    
-    # 지형 보너스 처리
-    b_g_pow, r_g_pow = 0.5, 0.5
-    if terrain == "야지 (산악)":
-        blue_power_map["기갑 (전차/장갑차)"] *= 0.7; red_power_map["기갑 (전차/장갑차)"] *= 0.7
-        b_g_pow, r_g_pow = 0.8, 0.8
-    elif terrain == "시가지":
-        blue_power_map["기갑 (전차/장갑차)"] *= 0.5; red_power_map["기갑 (전차/장갑차)"] *= 0.5
-        blue_power_map["보병 (정규 보병)"] *= 1.3; red_power_map["보병 (정규 보병)"] *= 1.3
-        b_g_pow, r_g_pow = 1.5, 1.5
-        
-    # 기본 단일 제대 총 화력 합산
-    blue_base_dmg = sum(blue_regular[br] * blue_unit_count * blue_power_map[br] for br in BRANCH_POWER.keys()) + (blue_guerrilla * b_g_pow)
-    red_base_dmg = sum(red_regular[br] * red_unit_count * red_power_map[br] for br in BRANCH_POWER.keys()) + (red_guerrilla * r_g_pow)
-    
-    # 기본 전술 계수 및 법칙 추출
-    b_tac = TACTICAL_OPTIONS[blue_tactics]
-    r_tac = TACTICAL_OPTIONS[red_tactics]
+
+    B_HP, R_HP = float(blue_start_HP), float(red_start_HP)
+    b_tac, r_tac = TACTICAL_OPTIONS[blue_tactics], TACTICAL_OPTIONS[red_tactics]
     is_linear = (b_tac["law"] == "선형" or r_tac["law"] == "선형")
     
-    # 초기 배치 방어력 버프
     blue_def_mod = 2.0 if "자유진영 진지방어" in tactics_relation else 1.0
     red_def_mod = 2.0 if "공산진영 진지방어" in tactics_relation else 1.0
 
-    # 턴제 루프 구동을 위한 변수 복사
-    B_HP = float(blue_start_HP)
-    R_HP = float(red_start_HP)
+    st.subheader("🛰️ 참모본부 위성 실시간 전술 지도 및 작전 로그")
     
-    st.subheader("🎬 실시간 전장 브리핑 및 교전 로그")
+    # 맵 전용 화면 플레이스홀더와 로그 플레이스홀더를 분리하여 깔끔하게 배치
+    map_placeholder = st.empty()
     log_placeholder = st.empty()
-    status_container = st.container()
     
     turn = 1
-    max_turns = 12 # 무한루프 방지 최대 턴 제한
+    max_turns = 12
     
-    # 시각적 변화를 실시간으로 보여주기 위한 턴 루프
     while B_HP > 0 and R_HP > 0 and turn <= max_turns:
-        # 🎲 매 턴 다른 전장의 안개 이벤트 발생
+        # 1. 부대 이동 애니메이션 시뮬레이션 (턴이 지날수록 중앙 전선으로 전진)
+        if turn == 2: b_x, b_y = 1, 2; r_x, r_y = 6, 5
+        elif turn == 3: b_x, b_y = 2, 3; r_x, r_y = 5, 4
+        elif turn >= 4: b_x, b_y = 3, 4; r_x, r_y = 4, 4  # 4턴부터는 정면 충돌 교전 지역 고정
+        
+        # 현재 부대가 위치한 타일의 지형 파악
+        current_tile = base_map[b_y][b_x] if turn < 4 else base_map[3][4]
+        
+        # 지형별 실시간 화력 가중치 연산
+        blue_power_map = BRANCH_POWER.copy()
+        red_power_map = BRANCH_POWER.copy()
+        b_g_pow, r_g_pow = 0.5, 0.5
+        
+        if current_tile == "⛰️":
+            blue_power_map["기갑 (전차/장갑차)"] *= 0.7; red_power_map["기갑 (전차/장갑차)"] *= 0.7
+            b_g_pow, r_g_pow = 0.8, 0.8
+        elif current_tile == "🏢":
+            blue_power_map["기갑 (전차/장갑차)"] *= 0.5; red_power_map["기갑 (전차/장갑차)"] *= 0.5
+            blue_power_map["보병 (정규 보병)"] *= 1.3; red_power_map["보병 (정규 보병)"] *= 1.3
+            b_g_pow, r_g_pow = 1.5, 1.5
+
+        blue_base_dmg = sum(blue_regular[br] * blue_unit_count * blue_power_map[br] for br in BRANCH_POWER.keys()) + (blue_guerrilla * b_g_pow)
+        red_base_dmg = sum(red_regular[br] * red_unit_count * red_power_map[br] for br in BRANCH_POWER.keys()) + (red_guerrilla * r_g_pow)
+
+        # 🎲 랜덤 이벤트
         evt = random.choice(RANDOM_EVENTS)
         
-        # 란체스터 법칙에 따른 실시간 화력 연산
-        # 제곱 법칙이면 (현재 인원 비례 가중치)^2 혹은 현재원 기반 화력 집중 효과 반영
+        # 란체스터 화력 연산
         if not is_linear:
-            # 제곱 법칙: 현재 남은 인원 비율만큼 화력 유지
-            b_ratio = (B_HP / blue_start_HP)
-            r_ratio = (R_HP / red_start_HP)
-            b_current_dmg = blue_base_dmg * b_ratio * b_tac["atk_mod"] * blue_morale * evt["blue"]
-            r_current_dmg = red_base_dmg * r_ratio * r_tac["atk_mod"] * red_morale * evt["red"]
+            b_current_dmg = blue_base_dmg * (B_HP / blue_start_HP) * b_tac["atk_mod"] * blue_morale * evt["blue"]
+            r_current_dmg = red_base_dmg * (R_HP / red_start_HP) * r_tac["atk_mod"] * red_morale * evt["red"]
         else:
-            # 선형 법칙: 인원이 줄어도 화력이 선형적으로만 분산됨
             b_current_dmg = blue_base_dmg * b_tac["atk_mod"] * blue_morale * evt["blue"] * 0.4
             r_current_dmg = red_base_dmg * r_tac["atk_mod"] * red_morale * evt["red"] * 0.4
             
-        # 서로에게 가해지는 최종 피해 (방어력 모디파이어 나누기)
         b_inflict = max(1.0, b_current_dmg / red_def_mod)
         r_inflict = max(1.0, r_current_dmg / blue_def_mod)
         
-        # 데미지 적용
-        B_HP -= r_inflict
-        R_HP -= b_inflict
+        B_HP = max(0, B_HP - r_inflict)
+        R_HP = max(0, R_HP - b_inflict)
         
-        # HP 하한선 차단
-        if B_HP < 0: B_HP = 0
-        if R_HP < 0: R_HP = 0
+        # 🗺️ 2. 지도 실시간 그래픽 업데이트 (문자열 조합)
+        map_html = "<div style='font-family: monospace; line-height: 1.5; letter-spacing: 5px; font-size: 24px; background-color: #1e1e1e; padding: 20px; border-radius: 10px; border: 2px solid #444; width: fit-content; margin: auto;'>"
+        for y in range(8):
+            row_str = ""
+            for x in range(8):
+                if x == b_x and y == b_y and B_HP > 0:
+                    row_str += "🔵" # 자유군 부대 마커
+                elif x == r_x and y == r_y and R_HP > 0:
+                    row_str += "🔴" # 공산군 부대 마커
+                elif turn >= 4 and x == 4 and y == 4 and B_HP > 0 and R_HP > 0:
+                    row_str += "💥" # 정면 격돌 전선 마커
+                else:
+                    row_str += base_map[y][x]
+            map_html += row_str + "<br>"
+        map_html += "</div>"
         
-        # 📊 실시간 화면 갱신 (시각적 턴제 연출)
+        # 지도 화면 인쇄
+        with map_placeholder.container():
+            st.markdown("<p style='text-align: center; color: #aaa; font-weight: bold;'>[ 위성 관측 실시간 전장 작전 지도 ]</p>", unsafe_allow_html=True)
+            st.markdown(map_html, unsafe_allow_html=True)
+            st.markdown("<p style='text-align: center; font-size: 14px; color: #888;'>범례: ⬜ 평지 | ⛰️ 산악 | 🏢 시가지 | 🔵 자유군 | 🔴 공산군 | 💥 교전지</p>", unsafe_allow_html=True)
+
+        # 📊 3. 하단 잔존 게이지 및 텍스트 로그 업데이트
         with log_placeholder.container():
-            st.markdown(f"### ⚔️ **제 {turn} 턴 교전 상황** (전장의 안개: `{evt['title']}`)")
-            st.caption(f"💬 *이벤트 효과: {evt['desc']}*")
+            st.markdown(f"### ⚔️ **제 {turn} 턴 전황 보고** (현재 격전지 지형: {current_tile} | 돌발 변수: `{evt['title']}`)")
+            st.caption(f"💬 *전장 보고: {evt['desc']}*")
             
-            # 게이지 바 시각화 (HTML/CSS 활용)
             b_per = (B_HP / blue_start_HP) * 100
             r_per = (R_HP / red_start_HP) * 100
             
             col_b, col_r = st.columns(2)
             with col_b:
-                st.write(f"🔵 **자유진영 군세 잔존율:** {round(b_per, 1)}% ({int(B_HP)} / {int(blue_start_HP)})")
-                st.progress(min(1.0, max(0.0, B_HP / blue_start_HP)))
+                st.write(f"🔵 **자유진영 군세:** {round(b_per, 1)}% ({int(B_HP)}명)")
+                st.progress(B_HP / blue_start_HP)
             with col_r:
-                st.write(f"🔴 **공산진영 군세 잔존율:** {round(r_per, 1)}% ({int(R_HP)} / {int(red_start_HP)})")
-                st.progress(min(1.0, max(0.0, R_HP / red_start_HP)))
+                st.write(f"🔴 **공산진영 군세:** {round(r_per, 1)}% ({int(R_HP)}명)")
+                st.progress(R_HP / red_start_HP)
                 
-            st.markdown(f"**💥 이번 턴 타격 로그:** 자유진영이 {int(b_inflict)}의 대미지 타격 ⚔️ 공산진영이 {int(r_inflict)}의 대미지 타격")
+            st.markdown(f"**💥 교전 피해:** 자유군 타격량 {int(b_inflict)} ⚔️ 공산군 타격량 {int(r_inflict)}")
             st.markdown("---")
             
         turn += 1
-        time.sleep(0.8) # 0.8초 딜레이를 주어 턴이 실제로 흘러가는 듯한 시각 효과 부여
+        time.sleep(1.2) # 지도가 움직이는 모습을 관측할 수 있도록 시간 간격 조정
 
-    # 🏁 최종 전과 보고서
+    # 최종 결과 보고
     st.header("🏁 참모본부 최종 전과 분석 보고서")
     if B_HP > 0 and R_HP == 0:
-        st.success(f"🏆 **자유진영 승리!** {turn-1}턴 만에 작전 지역 내 공산진영을 완전 격멸 및 소탕하였습니다.")
+        st.success(f"🏆 **자유진영 승리!** 공산진영 세력을 격멸하고 작전 지도를 완전히 확보했습니다.")
     elif R_HP > 0 and B_HP == 0:
-        st.error(f"💀 **공산진영 승리...** 자유진영 전선이 무너지며 {turn-1}턴 만에 작전 지역에서 철수했습니다.")
+        st.error(f"💀 **공산진영 승리...** 자유진영 전선이 돌파당하며 작전 지도에서 패퇴했습니다.")
     else:
-        st.warning("🤝 **교착 상태 / 동귀어진:** 양측 모두 치명적인 피해를 입고 전열이 붕괴되어 무승부로 끝났습니다.")
+        st.warning("🤝 **교착 상태:** 양측 모두 전멸하거나 작전 기한 초과로 휴전에 돌입했습니다.")
