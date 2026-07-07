@@ -1,13 +1,15 @@
 import streamlit as st
 import math
+import random
 
 # 페이지 레이아웃 설정
+st.set_title = "란체스터 작전술 시뮬레이터"
 st.set_page_config(page_title="란체스터 작전술 시뮬레이터", layout="wide")
 
-st.title("🎖️ 란체스터 작전술·제대 복합 시뮬레이터 (자유 vs 공산)")
-st.write("대규모 전선 관점에서 부대의 제대 규모, 제대 개수, 그리고 핵심 군사 전술을 융합하여 교전 결과를 예측합니다.")
+st.title("🎲 란체스터 글로벌 작전술 시뮬레이터 (전장의 안개 반영)")
+st.write("지형과 전술뿐만 아니라 날씨, 보급, 그리고 예측 불가능한 '돌발 변수'까지 실시간으로 계산하는 실전형 시뮬레이터입니다.")
 
-# 1. 부대 규모(제대) 정의 (선택창 형식용)
+# 1. 부대 규모(제대) 정의
 UNIT_SCALES = {
     "팀 (Team - 약 3~5명)": 1,
     "반 (Section - 약 10명 내외)": 2,
@@ -23,7 +25,7 @@ UNIT_SCALES = {
     "야전군 (Field Army - 약 500,000명)": 500000
 }
 
-# 2. 전선 규모에서 중요한 핵심 군사 전술 정의 및 효과
+# 2. 핵심 군사 전술 정의
 TACTICAL_OPTIONS = {
     "정면 공격 (Frontal Assault)": {
         "desc": "가장 기본적이고 정직한 공격. 보너스나 페널티가 없습니다.",
@@ -51,7 +53,7 @@ TACTICAL_OPTIONS = {
     }
 }
 
-# 3. 정규병과 및 기본 전투력 지수 (소총수 = 1.0 기준)
+# 3. 정규병과 및 기본 전투력 지수
 BRANCH_POWER = {
     "보병 (정규 보병 단위)": 1.0,
     "기갑 (전차 및 장갑차)": 25.0,
@@ -62,25 +64,36 @@ BRANCH_POWER = {
     "항공 (공격헬기 및 공중 자산)": 120.0
 }
 
+# 무작위 돌발 사건(전장의 안개) 풀
+RANDOM_EVENTS = [
+    {"title": "정상 교전", "desc": "특별한 돌발 변수 없이 정해진 시나리오대로 교전이 진행됩니다.", "blue_mod": 1.0, "red_mod": 1.0},
+    {"title": "지단장 전사 (지휘 통제 마비)", "desc": "교전 초기, 자유진영의 주요 지휘관이 저격당해 지휘 체계가 일시 마비되었습니다. (자유진영 화력 -30%)", "blue_mod": 0.7, "red_mod": 1.0},
+    {"title": "낙뢰 및 전자기 폭풍", "desc": "강한 낙뢰로 인해 양측의 무선 통신과 드론 자산이 일시 먹통이 되었습니다. (양측 첨단 자산 마비, 전체 화력 -15%)", "blue_mod": 0.85, "red_mod": 0.85},
+    {"title": "공산진영 탄약고 대폭발", "desc": "자유진영 게릴라의 은밀한 침투로 공산진영의 전방 탄약고가 폭발했습니다. (공산진영 화력 -35%)", "blue_mod": 1.0, "red_mod": 0.65},
+    {"title": "피아식별 오인 사격 (오사)", "desc": "자유진영의 항공 지원 중 오인 사격이 발생해 아군 부대를 타격했습니다. (자유진영 화력 -25%)", "blue_mod": 0.75, "red_mod": 1.0},
+    {"title": "악천후로 인한 항공 자산 결항", "desc": "갑작스러운 폭우와 강풍으로 양측 모두 헬기 및 드론을 띄우지 못합니다. (항공/드론 화력 급감, 전체 화력 -20%)", "blue_mod": 0.8, "red_mod": 0.8},
+    {"title": "결사 항전 (사기 충천)", "desc": "공산진영 부대가 퇴로가 끊기자 독전대의 감시 하에 미친 듯한 결사 항전을 개시합니다. (공산진영 화력 +25%)", "blue_mod": 1.0, "red_mod": 1.25},
+    {"title": "기습적인 야간 야간전 돌입", "desc": "야간 투시경 장비가 우수한 자유진영이 야간 기습을 감행해 완벽한 주도권을 잡았습니다. (자유진영 화력 +30%)", "blue_mod": 1.3, "red_mod": 1.0}
+]
+
 st.markdown("---")
 
-# [상단 중앙 설정 영역] ----------------------------------------------------
-st.subheader("🌐 전장 환경 및 작전 교리 설정")
-c_env1, c_env2, c_env3 = st.columns(3)
+# [상단 종합 전장 변수 영역] ----------------------------------------------------
+st.subheader("🌐 전장 환경 및 환경적 변수 설정")
+c_env1, c_env2, c_env3, c_env4 = st.columns(4)
 
 with c_env1:
-    # 바(Slider) 형태에서 드롭다운 선택창(Selectbox)으로 변경
-    selected_scale = st.selectbox(
-        "📏 작전 부대 체급 (제대 규모)",
-        options=list(UNIT_SCALES.keys()),
-        index=4 # 기본값 '중대'
-    )
+    selected_scale = st.selectbox("📏 작전 부대 체급 (제대 규모)", options=list(UNIT_SCALES.keys()), index=4)
     scale_weight = UNIT_SCALES[selected_scale]
 
 with c_env2:
     terrain = st.selectbox("⛰️ 전장 지형 선택", ["평지 (보너스 없음)", "야지 (수풀/산악 - 기갑 효율 감소)", "시가지 (엄폐/건물 - 보병/비정규병 유리)"])
 
 with c_env3:
+    # 날씨 변수 추가
+    weather = st.selectbox("☀️ 기상 조건", ["맑음 (기본)", "폭우/폭설 (기갑 이동 및 포병 사격 제한)", "짙은 안개 (드론 및 항공 정찰 불가능)"])
+
+with c_env4:
     tactics_relation = st.selectbox("⚔️ 공수 관계", ["공평한 조우전", "자유진영이 진지 방어 중", "공산진영이 진지 방어 중"])
 
 st.markdown("---")
@@ -96,9 +109,10 @@ with col1:
     blue_tactics = st.selectbox("자유진영 적용 전술", list(TACTICAL_OPTIONS.keys()), key="blue_tac")
     st.caption(f"ℹ️ {TACTICAL_OPTIONS[blue_tactics]['desc']}")
     
-    st.subheader("[📦 부대 규모 및 제대 개수]")
-    # 제대 개수 선택창 추가
+    st.subheader("[📦 부대 규모 및 보급 변수]")
     blue_unit_count = st.number_input("자유진영 참전 제대 개수 (부대 수)", min_value=0, value=0, step=1, key="blue_uc")
+    # 보급 상태 변수 추가
+    blue_supply = st.select_slider("자유진영 보급 상태", options=["보급 끊김 (화력 -50%)", "부족", "원활 (기본)", "과충전 (화력 +10%)"], value="원활 (기본)", key="blue_sup")
     
     st.subheader("[정규 병력 편성 (제대 1개당 평균 구성)]")
     blue_regular = {}
@@ -120,9 +134,10 @@ with col2:
     red_tactics = st.selectbox("공산진영 적용 전술", list(TACTICAL_OPTIONS.keys()), key="red_tac")
     st.caption(f"ℹ️ {TACTICAL_OPTIONS[red_tactics]['desc']}")
     
-    st.subheader("[📦 부대 규모 및 제대 개수]")
-    # 제대 개수 선택창 추가
+    st.subheader("[📦 부대 규모 및 보급 변수]")
     red_unit_count = st.number_input("공산진영 참전 제대 개수 (부대 수)", min_value=0, value=0, step=1, key="red_uc")
+    # 보급 상태 변수 추가
+    red_supply = st.select_slider("공산진영 보급 상태", options=["보급 끊김 (화력 -50%)", "부족", "원활 (기본)", "과충전 (화력 +10%)"], value="원활 (기본)", key="red_sup")
     
     st.subheader("[정규 병력 편성 (제대 1개당 평균 구성)]")
     red_regular = {}
@@ -141,16 +156,27 @@ st.markdown("---")
 # [계산 및 시뮬레이션] ----------------------------------------------------
 if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="primary", use_container_width=True):
     
+    # 1. 숙련도 변수 변환
     def get_exp_modifier(exp_str):
         if "신병" in exp_str: return 0.8
         if "베테랑" in exp_str: return 1.3
         if "최정예" in exp_str: return 1.7
         return 1.0
 
+    # 2. 보급 변수 배율 변환
+    def get_supply_modifier(sup_str):
+        if "보급 끊김" in sup_str: return 0.5
+        if "부족" in sup_str: return 0.8
+        if "과충전" in sup_str: return 1.1
+        return 1.0
+
     blue_exp_mod = get_exp_modifier(blue_exp)
     red_exp_mod = get_exp_modifier(red_exp)
+    
+    blue_sup_mod = get_supply_modifier(blue_supply)
+    red_sup_mod = get_supply_modifier(red_supply)
 
-    # 지형에 따른 전투력 맵 생성 (복사본)
+    # 지형/날씨에 따른 전투력 맵 생성 (복사본)
     blue_branch_power = BRANCH_POWER.copy()
     red_branch_power = BRANCH_POWER.copy()
     
@@ -173,16 +199,29 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
         blue_g_power = 1.5
         red_g_power = 1.5
 
+    # 🌤️ 날씨 변수 추가 반영
+    if "폭우/폭설" in weather:
+        # 진흙탕(기동 불능) 및 시야 제한으로 기갑/포병 화력 감소
+        blue_branch_power["기갑 (전차 및 장갑차)"] *= 0.6
+        red_branch_power["기갑 (전차 및 장갑차)"] *= 0.6
+        blue_branch_power["포병 (자주포, 다연장 등)"] *= 0.7
+        red_branch_power["포병 (자주포, 다연장 등)"] *= 0.7
+    elif "짙은 안개" in weather:
+        # 가시거리 제한으로 정보/드론 및 공격헬기 마비
+        blue_branch_power["정보/드론 (UAV 및 전자전)"] *= 0.3
+        red_branch_power["정보/드론 (UAV 및 전자전)"] *= 0.3
+        blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 0.4
+        red_branch_power["항공 (공격헬기 및 공중 자산)"] *= 0.4
+
     # 진영별 기본 교리 보너스
     blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.15
     blue_branch_power["정보/드론 (UAV 및 전자전)"] *= 1.15
     red_branch_power["포병 (자주포, 다연장 등)"] *= 1.15
 
-    # ⚔️ 선택한 [작전 전술] 보너스 실시간 추가 결합
+    # 선택한 [작전 전술] 보너스 결합
     b_tac_data = TACTICAL_OPTIONS[blue_tactics]
     r_tac_data = TACTICAL_OPTIONS[red_tactics]
     
-    # 전격전 전술 반영 시 기갑/항공 강화
     if "전격전" in blue_tactics:
         blue_branch_power["기갑 (전차 및 장갑차)"] *= 1.5
         blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.5
@@ -192,7 +231,6 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
         red_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.5
         red_branch_power["보병 (정규 보병 단위)"] *= 0.9
         
-    # 네트워크 중심전 전술 반영 시 드론/항공 강화
     if "네트워크" in blue_tactics:
         blue_branch_power["정보/드론 (UAV 및 전자전)"] *= 1.6
         blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.6
@@ -200,16 +238,17 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
         red_branch_power["정보/드론 (UAV 및 전자전)"] *= 1.6
         red_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.6
 
-    # 소모전 반영 시 포병 강화
     if "소모전" in blue_tactics:
         blue_branch_power["포병 (자주포, 다연장 등)"] *= 1.3
     if "소모전" in red_tactics:
         red_branch_power["포병 (자주포, 다연장 등)"] *= 1.3
 
-    # 최종 화력 및 총원 계산 (제대 개수 반영)
-    def calc_final_metrics(regular_inputs, guerrilla_count, branch_power_map, exp_mod, morale_mod, unit_count, tac_mod):
+    # 🎲 [전장의 안개] 실시간 무작위 이벤트 추출
+    battle_event = random.choice(RANDOM_EVENTS)
+
+    # 최종 화력 및 총원 계산 (보급 및 랜덤 이벤트 변수 곱연산 반영)
+    def calc_final_metrics(regular_inputs, guerrilla_count, branch_power_map, exp_mod, morale_mod, unit_count, tac_mod, sup_mod, event_mod):
         total_p = 0.0
-        # 총원 = (제대당 정규군 수 * 제대 개수) + 비정규군 전체 수
         total_regular_in_one_unit = sum(regular_inputs.values())
         total_count = (total_regular_in_one_unit * unit_count) + guerrilla_count
         
@@ -220,38 +259,35 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
         # 비정규군 화력
         total_p += (guerrilla_count * (blue_g_power if "자유" in branch_power_map else red_g_power))
         
-        # 숙련도 * 지휘관역량 * 전술계수(공격/방어) 반영
-        total_p = total_p * exp_mod * morale_mod * tac_mod
+        # [변수 결합]: 기본화력 * 숙련도 * 지휘관역량 * 전술 * 보급 * 돌발사건
+        total_p = total_p * exp_mod * morale_mod * tac_mod * sup_mod * event_mod
         return total_p, total_count
 
-    blue_p, blue_cnt = calc_final_metrics(blue_regular, blue_guerrilla, blue_branch_power, blue_exp_mod, blue_morale, blue_unit_count, b_tac_data["atk_mod"])
-    red_p, red_cnt = calc_final_metrics(red_regular, red_guerrilla, red_branch_power, red_exp_mod, red_morale, red_unit_count, r_tac_data["atk_mod"])
+    blue_p, blue_cnt = calc_final_metrics(blue_regular, blue_guerrilla, blue_branch_power, blue_exp_mod, blue_morale, blue_unit_count, b_tac_data["atk_mod"], blue_sup_mod, battle_event["blue_mod"])
+    red_p, red_cnt = calc_final_metrics(red_regular, red_guerrilla, red_branch_power, red_exp_mod, red_morale, red_unit_count, r_tac_data["atk_mod"], red_sup_mod, battle_event["red_mod"])
 
-    # 공수 관계(진지 방어) 보너스 추가 반영
+    # 공수 관계 방어선 보너스
     if "자유진영이 진지 방어" in tactics_relation: red_p /= 2.0
     elif "공산진영이 진지 방어" in tactics_relation: blue_p /= 2.0
 
-    # 양측 중 하나라도 부대가 없으면 에러
+    # 예외 검사
     if blue_cnt == 0 or red_cnt == 0 or blue_unit_count == 0 or red_unit_count == 0:
-        st.error("⚠️ 양측 진영에 참전 제대 개수(부대 수)와 병력을 최소 1개 이상 배치해야 교전이 시작됩니다!")
+        st.error("⚠️ 양측 진영에 참전 부대 수와 병력을 배치해 주세요!")
     else:
-        # 란체스터 법칙 계산 (규모 가중치 = 제대 크기 배율)
-        # 공식: (총 병력 수 * 제대 크기 배율)^2 * 총 화력 (제곱 법칙 기준)
-        # 단, 종심방어나 소모전 같은 전술은 선형 법칙(1:1 소모)을 강제하여 물량 우위를 상쇄시킬 수 있음
-        
-        # 양측의 법칙 교차 검증 (한쪽이라도 선형 법칙(방어/소모전)을 고르면 전장은 선형전(참호전/지연전) 양상으로 흘러감)
+        # 물리 법칙 판단
         is_linear_war = (b_tac_data["lanchester_law"] == "선형" or r_tac_data["lanchester_law"] == "선형")
         
         if is_linear_war:
-            # 란체스터 선형 법칙 (Square를 적용하지 않고 규모 * 화력으로 단순 비교)
             blue_force = (blue_cnt * scale_weight) * blue_p
             red_force = (red_cnt * scale_weight) * red_p
-            law_used = "란체스터 선형 법칙 (고대전/참호전/소모전 양상 적용 - 규모의 제곱 우위 상쇄)"
+            law_used = "란체스터 선형 법칙 (고대전/참호전/소모전 양상)"
         else:
-            # 란체스터 제곱 법칙 (현대전 집중 포격 양상)
             blue_force = ((blue_cnt * scale_weight) ** 2) * blue_p
             red_force = ((red_cnt * scale_weight) ** 2) * red_p
-            law_used = "란체스터 제곱 법칙 (현대전 집중 화력 양상 적용 - 규모의 제곱 우위 발동)"
+            law_used = "란체스터 제곱 법칙 (현대전 집중 화력 양상)"
+        
+        # 🚨 화면에 전장의 안개 경고 출력
+        st.warning(f"📢 **[전장의 안개 발생] 돌발 사건 발생: {battle_event['title']}**\n\n{battle_event['desc']}")
         
         st.header("📊 참모본부 최종 작전 분석 결과")
         st.caption(f"⚖️ 적용된 물리 법칙: {law_used}")
@@ -260,7 +296,7 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
         
         if blue_force > red_force:
             surv_ratio = math.sqrt((blue_force - red_force) / blue_force) if not is_linear_war else (blue_force - red_force) / blue_force
-            surv_ratio = max(0.01, min(surv_ratio, 1.0)) # 안전장치
+            surv_ratio = max(0.01, min(surv_ratio, 1.0))
             with res_col1:
                 st.success("🏆 **자유진영 (Blue Team) 작전 성공!**")
                 st.metric("자유진영 예상 총 생존율", f"{round(surv_ratio * 100, 1)}%")
@@ -273,7 +309,7 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
                         st.write(f"- {br}: 총 {total_br} ➡️ **{int(total_br * surv_ratio)}**")
                 if blue_guerrilla > 0:
                     st.write(f"- 비정규 민병대: {blue_guerrilla}명 ➡️ **{int(blue_guerrilla * surv_ratio)}명**")
-                st.caption("🔴 공산진영 군세는 작전 지역 내에서 완벽히 격멸되었습니다.")
+                st.caption("🔴 공산진영 군세는 전장의 무작위 불확실성과 화력 열세로 인해 전멸했습니다.")
                 
         elif red_force > blue_force:
             surv_ratio = math.sqrt((red_force - blue_force) / red_force) if not is_linear_war else (red_force - blue_force) / red_force
@@ -290,6 +326,6 @@ if st.button("🚀 전술·작전술 시뮬레이터 가동 (딸깍)", type="pri
                         st.write(f"- {br}: 총 {total_br} ➡️ **{int(total_br * surv_ratio)}**")
                 if red_guerrilla > 0:
                     st.write(f"- 비정규 파르티잔: {red_guerrilla}명 ➡️ **{int(red_guerrilla * surv_ratio)}명**")
-                st.caption("🔵 자유진영 군세는 작전 지역 내에서 완벽히 격멸되었습니다.")
+                st.caption("🔵 자유진영 군세는 전장의 무작위 불확실성과 화력 열세로 인해 전멸했습니다.")
         else:
-            st.warning("🤝 **무승부:** 양측의 작전 전술이 완벽히 상쇄되어 전열이 동귀어진했습니다.")
+            st.warning("🤝 **무승부:** 양측의 작전과 전장 변수가 완벽히 상쇄되었습니다.")
