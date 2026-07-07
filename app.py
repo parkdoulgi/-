@@ -1,13 +1,13 @@
 import streamlit as st
 import math
 
-# 페이지 레이아웃을 넓게 설정
-st.set_page_config(page_title="ROKA 란체스터 작전 시뮬레이터", layout="wide")
+# 페이지 레이아웃 설정
+st.set_page_config(page_title="란체스터 전략 시뮬레이터", layout="wide")
 
-st.title("🎖️ 대한민국 육군 병과·제대별 란체스터 시뮬레이터")
-st.write("나무위키 공식 육군 군사특기 편제와 부대 규모를 반영한 최종 정밀 계산기입니다.")
+st.title("🪖 란체스터 글로벌 전술 시뮬레이터 (자유 vs 공산)")
+st.write("지형지물, 숙련도, 진영별 특성 및 비정규전 요소까지 완벽히 통제하는 사령관용 시뮬레이터입니다.")
 
-# 1. 부대 규모(제대) 및 가중치 정의
+# 1. 부대 규모(제대) 정의
 UNIT_SCALES = {
     "팀 (Team)": 1,
     "반 (Section)": 2,
@@ -23,128 +23,193 @@ UNIT_SCALES = {
     "야전군 (Field Army)": 500000
 }
 
-# 2. 대한민국 육군 병과 분류 및 전투력 지수 (소총수 기본 화력 = 1.0 기준)
-ROKA_BRANCHES = {
-    "⚔️ 전투 병과": {
-        "보병 (소총수/박격포/특전 등)": 1.0,
-        "기갑 (K계열 전차/장갑차 조종 등)": 25.0,
-        "포병 (K-9자주포/다연장로켓 등)": 60.0,
-        "방공 (천마/비호/휴대용유도무기 등)": 40.0,
-        "정보 (UAV운용/드론/전자전 등)": 15.0,
-        "공병 (전투공병/공병장비 등)": 5.0,
-        "정보통신 (전술통신/무선전송 등)": 3.0,
-        "항공 (공격헬기/항공운용 등)": 120.0
-    },
-    "🛠️ 기술/행정/특수 병과": {
-        "화생방 (정찰/제독/연막 등)": 4.0,
-        "군수 (병기정비/탄약/병참보급/수송 등)": 2.0,
-        "군사경찰 (특임대/수사 등)": 3.5,
-        "의무 (군의/의정/간호 등 - 전투 지속력 버프)": 2.0,
-        "행정/특수 (인사/재정/정훈/법무/군종 등)": 1.0
-    }
+# 2. 정규병과 및 전투력 지수 (소총수 = 1.0 기준)
+BRANCH_POWER = {
+    "보병 (정규 보병 단위)": 1.0,
+    "기갑 (전차 및 장갑차)": 25.0,
+    "포병 (자주포, 다연장 등)": 60.0,
+    "방공 (대공 유도무기 등)": 40.0,
+    "정보/드론 (UAV 및 전자전)": 15.0,
+    "공병 (전투 및 시설공병)": 5.0,
+    "항공 (공격헬기 및 공중 자산)": 120.0
 }
 
 st.markdown("---")
 
-# 3. 부대 규모(제대) 선택 슬라이더
-selected_scale = st.select_slider(
-    "📏 작전 수행 부대 규모(제대) 선택",
-    options=list(UNIT_SCALES.keys()),
-    value="중대 (Company)"
-)
-scale_weight = UNIT_SCALES[selected_scale]
+# [상단 중앙 설정 영역] ----------------------------------------------------
+st.subheader("🌐 전장 환경 및 작전 교리 설정")
+c_env1, c_env2, c_env3 = st.columns(3)
 
-st.info(f"현재 설정된 작전 규모: **{selected_scale}** (기본 단위 대비 작전 가중치 {scale_weight:,}배 적용)")
+with c_env1:
+    selected_scale = st.select_slider(
+        "📏 작전 부대 규모 (제대)",
+        options=list(UNIT_SCALES.keys()),
+        value="중대 (Company)"
+    )
+    scale_weight = UNIT_SCALES[selected_scale]
+
+with c_env2:
+    # 지형지물 선택에 따른 방어/화력 영향
+    terrain = st.radio("⛰️ 전장 지형 선택", ("평지 (보너스 없음)", "야지 (수풀/산악 - 기갑 효율 감소)", "시가지 (엄폐/건물 - 보병/비정규병 유리)"))
+
+with c_env3:
+    # 공수 동맹 전술
+    tactics = st.radio("⚔️ 공수 관계", ("공평한 조우전", "자유진영이 진지 방어 중", "공산진영이 진지 방어 중"))
 
 st.markdown("---")
 
-# 4. 양측 진영 입력 칸 배치 (왼쪽 아군 / 오른쪽 적군)
+# [진영별 입력 영역] ----------------------------------------------------
 col1, col2 = st.columns(2)
 
-# 각 진영의 입력값을 담을 그릇(딕셔너리)
-a_inputs = {}
-b_inputs = {}
-
+# --- 자유진영 (Blue Team) ---
 with col1:
-    st.subheader("🔵 대한민국 육군 (A 진영)")
-    # 모든 병과의 기본값은 0으로 설정
-    for category, branches in ROKA_BRANCHES.items():
-        st.caption(f"[{category}]")
-        for branch in branches.keys():
-            a_inputs[branch] = st.number_input(f"A군 {branch} 수량", min_value=0, value=0, step=1, key=f"a_{branch}")
+    st.header("🔵 자유진영 (Free World)")
+    st.caption("💡 전술 특성: 첨단 장비 가치 우세, 정규전 효율 최적화")
     
-    st.markdown("**🛡️ 전술 지휘 요소**")
-    a_leader = st.slider("아군 지휘관 역량 및 사기 (배율)", 0.5, 2.0, 1.0, 0.1, key="a_leader_slider")
+    st.subheader("[정규 병력 편성]")
+    blue_regular = {}
+    for branch in BRANCH_POWER.keys():
+        blue_regular[branch] = st.number_input(f"자유 {branch} 수량", min_value=0, value=0, key=f"blue_{branch}")
+        
+    st.subheader("[비정규병 시스템]")
+    blue_guerrilla = st.number_input("자유 민병대 / 게릴라 (명)", min_value=0, value=0)
+    
+    st.subheader("[👨‍✈️ 숙련도 및 지휘]")
+    blue_exp = st.selectbox("자유진영 훈련 숙련도", ["신병 (화력 -20%)", "정규병 (기본)", "베테랑/숙련병 (화력 +30%)", "최정예 특수부대 (화력 +70%)"], index=1)
+    blue_morale = st.slider("자유진영 사기 및 지휘관 역량", 0.5, 2.0, 1.0, 0.1, key="blue_m")
 
+# --- 공산진영 (Red Team) ---
 with col2:
-    st.subheader("🔴 대항군 / 적군 (B 진영)")
-    for category, branches in ROKA_BRANCHES.items():
-        st.caption(f"[{category}]")
-        for branch in branches.keys():
-            b_inputs[branch] = st.number_input(f"B군 {branch} 수량", min_value=0, value=0, step=1, key=f"b_{branch}")
-            
-    st.markdown("**🛡️ 전술 지휘 요소**")
-    b_leader = st.slider("적군 지휘관 역량 및 사기 (배율)", 0.5, 2.0, 1.0, 0.1, key="b_leader_slider")
+    st.header("🔴 공산진영 (Communist Bloc)")
+    st.caption("💡 전술 특성: 비정규병(게릴라) 침투 및 포병 대량 운용 보너스")
+    
+    st.subheader("[정규 병력 편성]")
+    red_regular = {}
+    for branch in BRANCH_POWER.keys():
+        red_regular[branch] = st.number_input(f"공산 {branch} 수량", min_value=0, value=0, key=f"red_{branch}")
+        
+    st.subheader("[비정규병 시스템]")
+    red_guerrilla = st.number_input("공산 파르티잔 / 반군 (명)", min_value=0, value=0)
+    
+    st.subheader("[👨‍✈️ 숙련도 및 지휘]")
+    red_exp = st.selectbox("공산진영 훈련 숙련도", ["신병 (화력 -20%)", "정규병 (기본)", "베테랑/숙련병 (화력 +30%)", "최정예 특수부대 (화력 +70%)"], index=1)
+    red_morale = st.slider("공산진영 사기 및 지휘관 역량", 0.5, 2.0, 1.0, 0.1, key="red_m")
 
 st.markdown("---")
 
-# 5. 전투 시뮬레이션 계산 로직 ('딸깍' 버튼)
-if st.button("⚔️ 대한민국 육군 교전 시뮬레이션 시작 (딸깍)", type="primary", use_container_width=True):
+# [계산 및 시뮬레이션] ----------------------------------------------------
+if st.button("🚀 전술 시뮬레이터 가동 (딸깍)", type="primary", use_container_width=True):
     
-    # 총 화력 및 총 장비 수량 계산 함수
-    def evaluate_force(inputs, leader_bonus):
-        total_combat_power = 0.0
-        total_units_count = 0
-        
-        for category, branches in ROKA_BRANCHES.items():
-            for branch, power_val in branches.items():
-                quantity = inputs[branch]
-                total_units_count += quantity
-                # 화력 = 수량 * 병과 고유 전투력
-                total_combat_power += (quantity * power_val)
-                
-        # 지휘관 보너스 반영
-        total_combat_power *= leader_bonus
-        return total_combat_power, total_units_count
+    # 1. 숙련도 배율 변환 함수
+    def get_exp_modifier(exp_str):
+        if "신병" in exp_str: return 0.8
+        if "베테랑" in exp_str: return 1.3
+        if "최정예" in exp_str: return 1.7
+        return 1.0
 
-    a_power, a_count = evaluate_force(a_inputs, a_leader)
-    b_power, b_count = evaluate_force(b_inputs, b_leader)
+    blue_exp_mod = get_exp_modifier(blue_exp)
+    red_exp_mod = get_exp_modifier(red_exp)
+
+    # 2. 지형지물에 따른 병과별 가중치 실시간 수정 (복사본 사용)
+    blue_branch_power = BRANCH_POWER.copy()
+    red_branch_power = BRANCH_POWER.copy()
     
-    if a_count == 0 or b_count == 0:
-        st.error("⚠️ 양측 진영에 최소 1개 이상의 병과에 병력/장비를 배치해야 전투가 성립됩니다!")
+    # 비정규병 기본 전투력
+    blue_g_power = 0.5 
+    red_g_power = 0.5 
+    
+    if terrain == "야지 (수풀/산악 - 기갑 효율 감소)":
+        # 야지에서는 기갑 화력이 감소하고 공병/정보의 가치가 상승
+        blue_branch_power["기갑 (전차 및 장갑차)"] *= 0.7
+        red_branch_power["기갑 (전차 및 장갑차)"] *= 0.7
+        blue_g_power = 0.7  # 야지에서 게릴라 활성화
+        red_g_power = 0.7
+    elif terrain == "시가지 (엄폐/건물 - 보병/비정규병 유리)":
+        # 시가지에서는 기갑/항공 효율 극단적 감소, 보병 및 비정규병 화력 폭발
+        blue_branch_power["기갑 (전차 및 장갑차)"] *= 0.5
+        blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 0.6
+        red_branch_power["기갑 (전차 및 장갑차)"] *= 0.5
+        red_branch_power["항공 (공격헬기 및 공중 자산)"] *= 0.6
+        
+        blue_branch_power["보병 (정규 보병 단위)"] *= 1.3
+        red_branch_power["보병 (정규 보병 단위)"] *= 1.3
+        blue_g_power = 1.5  # 시가지 건물 엄폐로 비정규병 화력이 정규 소총수를 능가
+        red_g_power = 1.5
+
+    # 3. 진영별 교리/교전 전술 특성 반영
+    # 자유진영: 첨단 장비(항공, 정보, 방공) 화력 +15% 보너스
+    blue_branch_power["항공 (공격헬기 및 공중 자산)"] *= 1.15
+    blue_branch_power["정보/드론 (UAV 및 전자전)"] *= 1.15
+    
+    # 공산진영: 대량 포병 및 비정규전 물량 보너스 (포병 화력 +15%, 비정규병 머릿수 계산 이점)
+    red_branch_power["포병 (자주포, 다연장 등)"] *= 1.15
+
+    # 4. 최종 총 화력(공격력) 및 총 규모 계산
+    def calc_final_metrics(regular_inputs, guerrilla_count, branch_power_map, exp_mod, morale_mod):
+        total_p = 0.0
+        total_count = 0
+        
+        # 정규군 계산
+        for br, num in regular_inputs.items():
+            total_count += num
+            total_p += (num * branch_power_map[br])
+            
+        # 비정규군 계산
+        total_count += guerrilla_count
+        total_p += (guerrilla_count * (blue_g_power if "자유" in branch_power_map else red_g_power))
+        
+        # 숙련도 및 지휘력 적용
+        total_p = total_p * exp_mod * morale_mod
+        return total_p, total_count
+
+    blue_p, blue_cnt = calc_final_metrics(blue_regular, blue_guerrilla, blue_branch_power, blue_exp_mod, blue_morale)
+    red_p, red_cnt = calc_final_metrics(red_regular, red_guerrilla, red_branch_power, red_exp_mod, red_morale)
+
+    # 5. 진지 방어 보너스 적용 (란체스터 법칙상 상대방 화력 차감)
+    if tactics == "자유진영이 진지 방어 중":
+        red_p /= 2.0  # 방어 진지 구축으로 적 화력 반토막
+    elif tactics == "공산진영이 진지 방어 중":
+        blue_p /= 2.0
+
+    # 6. 전투 가능 여부 검사 및 란체스터 제곱 법칙 연산
+    if blue_cnt == 0 or red_cnt == 0:
+        st.error("⚠️ 양측 진영에 병력을 배치해 주세요!")
     else:
-        # 제대(규모) 가중치를 반영한 란체스터 제곱 법칙 계산
-        # 공식: (총 병력 수 * 제대 가중치)^2 * 계산된 총 화력 지수
-        a_final_force = ((a_count * scale_weight) ** 2) * a_power
-        b_final_force = ((b_count * scale_weight) ** 2) * b_power
+        # 제대 스케일을 곱한 최종 위력 계산
+        blue_force = ((blue_cnt * scale_weight) ** 2) * blue_p
+        red_force = ((red_cnt * scale_weight) ** 2) * red_p
         
-        st.header("📊 전장 시뮬레이션 분석 리포트")
+        st.header("📊 참모본부 최종 전황 분석 결과")
         
-        if a_final_force > b_final_force:
-            # 아군 승리 시 생존율 계산
-            survival_ratio = math.sqrt((a_final_force - b_final_force) / a_final_force)
-            st.success("🏆 **대한민국 육군(A)의 전술적 압승입니다!**")
-            st.metric(label="아군 예상 생존율", value=f"{round(survival_ratio * 100, 1)}%")
-            
-            st.write("### 📉 아군 잔존 병력 예측")
-            for branch in a_inputs.keys():
-                if a_inputs[branch] > 0:
-                    remains = int(a_inputs[branch] * survival_ratio)
-                    st.write(f"- {branch}: {a_inputs[branch]} ➡️ **{remains}** (손실: {a_inputs[branch] - remains})")
-            st.caption("※ 적(B 진영) 부대는 전멸(전투불능) 하였습니다.")
-            
-        elif b_final_force > a_final_force:
-            # 적군 승리 시 생존율 계산
-            survival_ratio = math.sqrt((b_final_force - a_final_force) / b_final_force)
-            st.error("💀 **아군이 패배하고 전선이 붕괴되었습니다...**")
-            st.metric(label="적군 예상 생존율", value=f"{round(survival_ratio * 100, 1)}%")
-            
-            st.write("### 📈 적군 잔존 병력 예측")
-            for branch in b_inputs.keys():
-                if b_inputs[branch] > 0:
-                    remains = int(b_inputs[branch] * survival_ratio)
-                    st.write(f"- {branch}: {b_inputs[branch]} ➡️ **{remains}**")
-            st.caption("※ 대한민국 육군(A 진영) 부대는 전멸(전투불능) 하였습니다.")
-            
+        # 결과 시각화 레이아웃
+        res_col1, res_col2 = st.columns(2)
+        
+        if blue_force > red_force:
+            surv_ratio = math.sqrt((blue_force - red_force) / blue_force)
+            with res_col1:
+                st.success("🏆 **자유진영 (Blue) 승리!**")
+                st.metric("자유진영 예상 생존율", f"{round(surv_ratio * 100, 1)}%")
+            with res_col2:
+                st.write("### 📉 잔존 정규 병력 및 장비")
+                for br, num in blue_regular.items():
+                    if num > 0:
+                        st.write(f"- {br}: {num} ➡️ **{int(num * surv_ratio)}**")
+                if blue_guerrilla > 0:
+                    st.write(f"- 비정규 민병대: {blue_guerrilla}명 ➡️ **{int(blue_guerrilla * surv_ratio)}명**")
+                st.caption("🔴 공산진영 군세는 전멸 및 붕괴되었습니다.")
+                
+        elif red_force > blue_force:
+            surv_ratio = math.sqrt((red_force - blue_force) / red_force)
+            with res_col1:
+                st.error("💀 **공산진영 (Red) 승리...**")
+                st.metric("공산진영 예상 생존율", f"{round(surv_ratio * 100, 1)}%")
+            with res_col2:
+                st.write("### 📈 잔존 정규 병력 및 장비")
+                for br, num in red_regular.items():
+                    if num > 0:
+                        st.write(f"- {br}: {num} ➡️ **{int(num * surv_ratio)}**")
+                if red_guerrilla > 0:
+                    st.write(f"- 비정규 파르티잔: {red_guerrilla}명 ➡️ **{int(red_guerrilla * surv_ratio)}명**")
+                st.caption("🔵 자유진영 군세는 전멸 및 붕괴되었습니다.")
         else:
-            st.warning("🤝 **무승부: 두 부대가 격렬하게 충돌하여 동귀어진했습니다.** 양측 모두 생존자가 없습니다.")
+            st.warning("🤝 전열의 완벽한 상쇄로 양측 모두 동귀어진하여 전멸했습니다.")
