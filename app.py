@@ -1,97 +1,150 @@
 import streamlit as st
 import math
 
-st.set_page_config(layout="wide") # 화면을 넓게 쓰기 위한 설정
-st.title("🪖 란체스터 종합 전장 시뮬레이터")
-st.write("보병, 전차, 전장 환경(방어 이점)까지 모두 고려한 실전형 계산기입니다.")
+# 페이지 레이아웃을 넓게 설정
+st.set_page_config(page_title="ROKA 란체스터 작전 시뮬레이터", layout="wide")
+
+st.title("🎖️ 대한민국 육군 병과·제대별 란체스터 시뮬레이터")
+st.write("나무위키 공식 육군 군사특기 편제와 부대 규모를 반영한 최종 정밀 계산기입니다.")
+
+# 1. 부대 규모(제대) 및 가중치 정의
+UNIT_SCALES = {
+    "팀 (Team)": 1,
+    "반 (Section)": 2,
+    "분대 (Squad)": 10,
+    "소대 (Platoon)": 30,
+    "중대 (Company)": 120,
+    "대대 (Battalion)": 500,
+    "연대 (Regiment)": 1500,
+    "여단 (Brigade)": 3500,
+    "사단 (Division)": 12000,
+    "군단 (Corps)": 50000,
+    "집단군 (Army Group)": 200000,
+    "야전군 (Field Army)": 500000
+}
+
+# 2. 대한민국 육군 병과 분류 및 전투력 지수 (소총수 기본 화력 = 1.0 기준)
+ROKA_BRANCHES = {
+    "⚔️ 전투 병과": {
+        "보병 (소총수/박격포/특전 등)": 1.0,
+        "기갑 (K계열 전차/장갑차 조종 등)": 25.0,
+        "포병 (K-9자주포/다연장로켓 등)": 60.0,
+        "방공 (천마/비호/휴대용유도무기 등)": 40.0,
+        "정보 (UAV운용/드론/전자전 등)": 15.0,
+        "공병 (전투공병/공병장비 등)": 5.0,
+        "정보통신 (전술통신/무선전송 등)": 3.0,
+        "항공 (공격헬기/항공운용 등)": 120.0
+    },
+    "🛠️ 기술/행정/특수 병과": {
+        "화생방 (정찰/제독/연막 등)": 4.0,
+        "군수 (병기정비/탄약/병참보급/수송 등)": 2.0,
+        "군사경찰 (특임대/수사 등)": 3.5,
+        "의무 (군의/의정/간호 등 - 전투 지속력 버프)": 2.0,
+        "행정/특수 (인사/재정/정훈/법무/군종 등)": 1.0
+    }
+}
 
 st.markdown("---")
 
-# 화면을 3분할 (아군 / 전장 상황 / 적군)
-col1, col_env, col2 = st.columns([2, 1.5, 2])
+# 3. 부대 규모(제대) 선택 슬라이더
+selected_scale = st.select_slider(
+    "📏 작전 수행 부대 규모(제대) 선택",
+    options=list(UNIT_SCALES.keys()),
+    value="중대 (Company)"
+)
+scale_weight = UNIT_SCALES[selected_scale]
+
+st.info(f"현재 설정된 작전 규모: **{selected_scale}** (기본 단위 대비 작전 가중치 {scale_weight:,}배 적용)")
+
+st.markdown("---")
+
+# 4. 양측 진영 입력 칸 배치 (왼쪽 아군 / 오른쪽 적군)
+col1, col2 = st.columns(2)
+
+# 각 진영의 입력값을 담을 그릇(딕셔너리)
+a_inputs = {}
+b_inputs = {}
 
 with col1:
-    st.subheader("🔵 아군 (A) 부대 편성")
-    A_inf = st.number_input("아군 보병 수 (명)", min_value=0, value=500, step=10)
-    A_tank = st.number_input("아군 전차 수 (대)", min_value=0, value=30, step=5)
+    st.subheader("🔵 대한민국 육군 (A 진영)")
+    # 모든 병과의 기본값은 0으로 설정
+    for category, branches in ROKA_BRANCHES.items():
+        st.caption(f"[{category}]")
+        for branch in branches.keys():
+            a_inputs[branch] = st.number_input(f"A군 {branch} 수량", min_value=0, value=0, step=1, key=f"a_{branch}")
     
-    st.markdown("**🛡️ 아군 숙련도 / 지원**")
-    A_morale = st.slider("아군 사기 및 지휘력 (배율)", 0.5, 2.0, 1.0, 0.1)
-    A_air = st.checkbox("아군 공중 지원 있음 (화력 +20%)")
-
-with col_env:
-    st.subheader("⛰️ 전장 환경 설정")
-    st.write("방어 측은 요새나 지형지물의 이점을 얻습니다.")
-    defender = st.radio("현재 방어 중인 진영", ("공평한 평지 전투", "아군(A)이 방어 중", "적군(B)이 방어 중"))
-    
-    # 방어 보너스 계수
-    def_bonus = 1.0
-    if defender != "공평한 평지 전투":
-        def_bonus = st.slider("진지/요새 방어력 배율 (피해 감소)", 1.2, 3.0, 1.5, 0.1)
+    st.markdown("**🛡️ 전술 지휘 요소**")
+    a_leader = st.slider("아군 지휘관 역량 및 사기 (배율)", 0.5, 2.0, 1.0, 0.1, key="a_leader_slider")
 
 with col2:
-    st.subheader("🔴 적군 (B) 부대 편성")
-    B_inf = st.number_input("적군 보병 수 (명)", min_value=0, value=800, step=10)
-    B_tank = st.number_input("적군 전차 수 (대)", min_value=0, value=15, step=5)
-    
-    st.markdown("**🛡️ 적군 숙련도 / 지원**")
-    B_morale = st.slider("적군 사기 및 지휘력 (배율)", 0.5, 2.0, 1.0, 0.1)
-    B_air = st.checkbox("적군 공중 지원 있음 (화력 +20%)")
+    st.subheader("🔴 대항군 / 적군 (B 진영)")
+    for category, branches in ROKA_BRANCHES.items():
+        st.caption(f"[{category}]")
+        for branch in branches.keys():
+            b_inputs[branch] = st.number_input(f"B군 {branch} 수량", min_value=0, value=0, step=1, key=f"b_{branch}")
+            
+    st.markdown("**🛡️ 전술 지휘 요소**")
+    b_leader = st.slider("적군 지휘관 역량 및 사기 (배율)", 0.5, 2.0, 1.0, 0.1, key="b_leader_slider")
 
 st.markdown("---")
 
-# '딸깍' 계산 버튼
-if st.button("🚀 전면전 시뮬레이션 시작", type="primary", use_container_width=True):
+# 5. 전투 시뮬레이션 계산 로직 ('딸깍' 버튼)
+if st.button("⚔️ 대한민국 육군 교전 시뮬레이션 시작 (딸깍)", type="primary", use_container_width=True):
     
-    # --- 군사학적 가중치 설정 ---
-    # 보병의 기본 전투력을 1로 잡았을 때, 현대 전차는 보병 수십 명의 가치를 가집니다.
-    INF_POWER = 1.0
-    TANK_POWER = 15.0 # 전차 1대 = 보병 15명의 화력
-    
-    # 1. 양측의 순수 총 화력(공격력) 계산
-    A_base_power = (A_inf * INF_POWER) + (A_tank * TANK_POWER)
-    B_base_power = (B_inf * INF_POWER) + (B_tank * TANK_POWER)
-    
-    # 버프 반영 (사기 및 공중지원)
-    A_total_power = A_base_power * A_morale * (1.2 if A_air else 1.0)
-    B_total_power = B_base_power * B_morale * (1.2 if B_air else 1.0)
-    
-    # 2. 방어 이점 반영 (상대방의 화력을 깎음)
-    if defender == "아군(A)이 방어 중":
-        B_total_power = B_total_power / def_bonus
-    elif defender == "적군(B)이 방어 중":
-        A_total_power = A_total_power / def_bonus
+    # 총 화력 및 총 장비 수량 계산 함수
+    def evaluate_force(inputs, leader_bonus):
+        total_combat_power = 0.0
+        total_units_count = 0
+        
+        for category, branches in ROKA_BRANCHES.items():
+            for branch, power_val in branches.items():
+                quantity = inputs[branch]
+                total_units_count += quantity
+                # 화력 = 수량 * 병과 고유 전투력
+                total_combat_power += (quantity * power_val)
+                
+        # 지휘관 보너스 반영
+        total_combat_power *= leader_bonus
+        return total_combat_power, total_units_count
 
-    # 3. 란체스터 제곱 법칙 계산 (규모의 제곱 * 화력)
-    # 여기서는 보병 수로 환산한 '가상 규모'로 계산합니다.
-    A_size_equivalent = A_inf + (A_tank * 5) # 방어력 관점에서의 전차 가치
-    B_size_equivalent = B_inf + (B_tank * 5)
+    a_power, a_count = evaluate_force(a_inputs, a_leader)
+    b_power, b_count = evaluate_force(b_inputs, b_leader)
     
-    A_force = (A_size_equivalent ** 2) * A_total_power
-    B_force = (B_size_equivalent ** 2) * B_total_power
-    
-    # 4. 결과 출력
-    st.header("📊 전투 분석 결과")
-    
-    if A_force > B_force:
-        # 아군 승리 시 생존율 계산
-        remaining_ratio = math.sqrt((A_force - B_force) / A_force)
-        A_surv_inf = round(A_inf * remaining_ratio)
-        A_surv_tank = round(A_tank * remaining_ratio)
-        
-        st.success("🏆 **아군(A)이 승리했습니다!**")
-        st.write(f"**남은 아군 병력:** 보병 약 {A_surv_inf}명, 전차 약 {A_surv_tank}대")
-        st.caption(f"적군은 전멸했으며, 아군은 초기 병력의 약 {round(remaining_ratio*100, 1)}%가 생존했습니다.")
-        
-    elif B_force > A_force:
-        # 적군 승리 시 생존율 계산
-        remaining_ratio = math.sqrt((B_force - A_force) / B_force)
-        B_surv_inf = round(B_inf * remaining_ratio)
-        B_surv_tank = round(B_tank * remaining_ratio)
-        
-        st.error("💀 **적군(B)에게 패배했습니다...**")
-        st.write(f"**남은 적군 병력:** 보병 약 {B_surv_inf}명, 전차 약 {B_surv_tank}대")
-        st.caption(f"아군은 전멸했으며, 적군은 초기 병력의 약 {round(remaining_ratio*100, 1)}%가 생존했습니다.")
-        
+    if a_count == 0 or b_count == 0:
+        st.error("⚠️ 양측 진영에 최소 1개 이상의 병과에 병력/장비를 배치해야 전투가 성립됩니다!")
     else:
-        st.warning("🤝 양측 모두 치명적인 피해를 입고 동귀어진했습니다. (무승부)")
+        # 제대(규모) 가중치를 반영한 란체스터 제곱 법칙 계산
+        # 공식: (총 병력 수 * 제대 가중치)^2 * 계산된 총 화력 지수
+        a_final_force = ((a_count * scale_weight) ** 2) * a_power
+        b_final_force = ((b_count * scale_weight) ** 2) * b_power
+        
+        st.header("📊 전장 시뮬레이션 분석 리포트")
+        
+        if a_final_force > b_final_force:
+            # 아군 승리 시 생존율 계산
+            survival_ratio = math.sqrt((a_final_force - b_final_force) / a_final_force)
+            st.success("🏆 **대한민국 육군(A)의 전술적 압승입니다!**")
+            st.metric(label="아군 예상 생존율", value=f"{round(survival_ratio * 100, 1)}%")
+            
+            st.write("### 📉 아군 잔존 병력 예측")
+            for branch in a_inputs.keys():
+                if a_inputs[branch] > 0:
+                    remains = int(a_inputs[branch] * survival_ratio)
+                    st.write(f"- {branch}: {a_inputs[branch]} ➡️ **{remains}** (손실: {a_inputs[branch] - remains})")
+            st.caption("※ 적(B 진영) 부대는 전멸(전투불능) 하였습니다.")
+            
+        elif b_final_force > a_final_force:
+            # 적군 승리 시 생존율 계산
+            survival_ratio = math.sqrt((b_final_force - a_final_force) / b_final_force)
+            st.error("💀 **아군이 패배하고 전선이 붕괴되었습니다...**")
+            st.metric(label="적군 예상 생존율", value=f"{round(survival_ratio * 100, 1)}%")
+            
+            st.write("### 📈 적군 잔존 병력 예측")
+            for branch in b_inputs.keys():
+                if b_inputs[branch] > 0:
+                    remains = int(b_inputs[branch] * survival_ratio)
+                    st.write(f"- {branch}: {b_inputs[branch]} ➡️ **{remains}**")
+            st.caption("※ 대한민국 육군(A 진영) 부대는 전멸(전투불능) 하였습니다.")
+            
+        else:
+            st.warning("🤝 **무승부: 두 부대가 격렬하게 충돌하여 동귀어진했습니다.** 양측 모두 생존자가 없습니다.")
